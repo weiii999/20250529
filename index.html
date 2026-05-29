@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>行事曆與 ICS 匯出工具</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        .card {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { 
+            width: 100%; 
+            padding: 10px; 
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box; 
+        }
+        button { 
+            padding: 10px 15px; 
+            background-color: #0d6efd; 
+            color: white; 
+            border: none; 
+            border-radius: 4px;
+            cursor: pointer; 
+            font-size: 16px;
+        }
+        button:hover { background-color: #0b5ed7; }
+        .event-item { 
+            border-left: 4px solid #0d6efd; 
+            background-color: #f8f9fa;
+            padding: 15px; 
+            margin-bottom: 10px; 
+            border-radius: 4px; 
+        }
+        .event-category { 
+            display: inline-block; 
+            background: #e9ecef; 
+            padding: 4px 8px; 
+            border-radius: 12px; 
+            font-size: 0.85em; 
+            color: #495057;
+            margin-bottom: 8px;
+        }
+        .event-item h4 { margin: 0 0 10px 0; }
+        .event-item p { margin: 5px 0; font-size: 0.9em; color: #555; }
+        .export-btn { background-color: #198754; width: 100%; margin-top: 10px; }
+        .export-btn:hover { background-color: #157347; }
+        
+        /* 月曆樣式 */
+        .calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .calendar-header button { padding: 5px 15px; background: #6c757d; }
+        .calendar-header button:hover { background: #5c636a; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+        .calendar-day-name { text-align: center; font-weight: bold; padding: 8px 0; background: #e9ecef; border-radius: 4px; }
+        .calendar-day { border: 1px solid #dee2e6; min-height: 80px; padding: 5px; border-radius: 4px; background: #fff; }
+        .calendar-day.empty { background: transparent; border: none; }
+        .calendar-day .date-num { font-weight: bold; margin-bottom: 5px; display: block; color: #495057; }
+        .calendar-event { 
+            background: #0dcaf0; 
+            color: #000; 
+            padding: 2px 4px; 
+            border-radius: 3px; 
+            font-size: 0.75em; 
+            margin-bottom: 3px; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            cursor: pointer;
+        }
+        .calendar-event.category-假期 { background: #ffc107; }
+        .calendar-event.category-會議 { background: #fd7e14; color: #fff;}
+    </style>
+</head>
+<body>
+
+    <h2>行事曆管理工具</h2>
+
+    <div class="card">
+        <h3>新增分類事項</h3>
+        <div class="form-group">
+            <label>標題 (Summary):</label>
+            <input type="text" id="title" placeholder="請輸入事項標題" required>
+        </div>
+        <div class="form-group">
+            <label>分類 (Category):</label>
+            <input type="text" id="category" placeholder="例如: 會議, 專案開發, 假期" required>
+        </div>
+        <div class="form-group">
+            <label>開始時間 (Start Time):</label>
+            <input type="datetime-local" id="start-time" required>
+        </div>
+        <div class="form-group">
+            <label>結束時間 (End Time):</label>
+            <input type="datetime-local" id="end-time" required>
+        </div>
+        <div class="form-group">
+            <label>描述備註 (Description):</label>
+            <textarea id="description" rows="3" placeholder="請輸入詳細描述..."></textarea>
+        </div>
+        <button onclick="addEvent()">➕ 新增事項</button>
+    </div>
+
+    <div class="card">
+        <div class="calendar-header">
+            <button onclick="changeMonth(-1)">◀ 上個月</button>
+            <h3 id="calendar-month-year" style="margin: 0;"></h3>
+            <button onclick="changeMonth(1)">下個月 ▶</button>
+        </div>
+        <div class="calendar-grid" id="calendar-grid"></div>
+    </div>
+
+    <div class="card">
+        <h3>已新增事項列表</h3>
+        <div id="events-container">目前無事項，請由上方表單新增。</div>
+        <button class="export-btn" onclick="exportICS()">📥 匯出成 .ics 檔案</button>
+        <button class="export-btn" style="background-color: #0dcaf0; color: #000;" onclick="saveToGoogleSheets()">☁️ 儲存至 Google Sheets</button>
+    </div>
+
+    <script>
+        const events = [];
+        let currentYear = new Date().getFullYear();
+        let currentMonth = new Date().getMonth();
+
+        function addEvent() {
+            const title = document.getElementById('title').value;
+            const category = document.getElementById('category').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+            const description = document.getElementById('description').value;
+
+            if (!title || !startTime || !endTime) {
+                alert('請至少填寫標題、開始時間與結束時間');
+                return;
+            }
+
+            if (new Date(startTime) >= new Date(endTime)) {
+                alert('結束時間必須晚於開始時間');
+                return;
+            }
+
+            events.push({ title, category, startTime, endTime, description });
+            renderEvents();
+            renderCalendar();
+            
+            // 清空部分欄位方便連續輸入
+            document.getElementById('title').value = '';
+            document.getElementById('description').value = '';
+        }
+
+        function renderEvents() {
+            const container = document.getElementById('events-container');
+            if (events.length === 0) {
+                container.innerHTML = '目前無事項，請由上方表單新增。';
+                return;
+            }
+
+            container.innerHTML = events.map(ev => `
+                <div class="event-item">
+                    ${ev.category ? `<span class="event-category">${ev.category}</span>` : ''}
+                    <h4>${ev.title}</h4>
+                    <p>🕒 ${ev.startTime.replace('T', ' ')} ~ ${ev.endTime.replace('T', ' ')}</p>
+                    ${ev.description ? `<p>📝 ${ev.description}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function changeMonth(offset) {
+            currentMonth += offset;
+            if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            else if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderCalendar();
+        }
+
+        function renderCalendar() {
+            const monthYearText = document.getElementById('calendar-month-year');
+            const grid = document.getElementById('calendar-grid');
+            
+            monthYearText.textContent = `${currentYear} 年 ${currentMonth + 1} 月`;
+            
+            const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            
+            let html = '';
+            const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+            dayNames.forEach(d => html += `<div class="calendar-day-name">${d}</div>`);
+            
+            for (let i = 0; i < firstDay; i++) {
+                html += `<div class="calendar-day empty"></div>`;
+            }
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                // 篩選出該日期的所有事件
+                const dayEvents = events.filter(ev => ev.startTime.startsWith(dateStr));
+                const eventsHtml = dayEvents.map(ev => `<div class="calendar-event category-${ev.category}" title="${ev.title}\n${ev.startTime.replace('T', ' ')} ~ ${ev.endTime.replace('T', ' ')}">${ev.title}</div>`).join('');
+                
+                html += `<div class="calendar-day"><span class="date-num">${day}</span>${eventsHtml}</div>`;
+            }
+            grid.innerHTML = html;
+        }
+
+        // 將瀏覽器的時間格式轉成 iCalendar 規定的 UTC 格式 (YYYYMMDDThhmmssZ)
+        function formatToICSDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        }
+
+        function exportICS() {
+            if (events.length === 0) {
+                alert('沒有可匯出的事項');
+                return;
+            }
+
+            // 建立標準的 VCALENDAR 檔頭
+            let icsContent = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Calendar Web App//TW\nCALSCALE:GREGORIAN\n";
+
+            // 迭代所有事件並加上 VEVENT 結構
+            events.forEach(ev => {
+                icsContent += "BEGIN:VEVENT\n";
+                icsContent += `DTSTART:${formatToICSDate(ev.startTime)}\n`;
+                icsContent += `DTEND:${formatToICSDate(ev.endTime)}\n`;
+                icsContent += `SUMMARY:${ev.title}\n`;
+                if (ev.description) icsContent += `DESCRIPTION:${ev.description.replace(/\n/g, '\\n')}\n`;
+                if (ev.category) icsContent += `CATEGORIES:${ev.category}\n`;
+                icsContent += "END:VEVENT\n";
+            });
+
+            icsContent += "END:VCALENDAR";
+
+            // 透過 Blob 與 a tag 觸發瀏覽器下載
+            const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'calendar-events.ics';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        async function saveToGoogleSheets() {
+            if (events.length === 0) {
+                alert('沒有可儲存的事項');
+                return;
+            }
+            
+            // 🔥 請將這裡替換成您剛剛部署取得的 Web App URL
+            const scriptUrl = 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL';
+            
+            try {
+                // 為了避免瀏覽器發送 OPTIONS preflight request 被 Google 擋下，這裡使用 text/plain 發送
+                const response = await fetch(scriptUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(events)
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    alert('成功儲存至 Google Sheets！');
+                } else {
+                    alert('儲存失敗：' + result.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('發送時發生錯誤，請檢查 Console 或 API 網址是否正確。');
+            }
+        }
+        
+        // 初始化月曆
+        renderCalendar();
+    </script>
+</body>
+</html>
